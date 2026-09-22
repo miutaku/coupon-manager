@@ -50,7 +50,7 @@ public sealed partial class MainFlowTests(BrowserFixture browser) : IClassFixtur
 
         var baseUrl = browser.BaseUrl!;
         await page.GotoAsync(baseUrl);
-        await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "クーポン" })).ToBeVisibleAsync();
+        await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "クーポン", Exact = true })).ToBeVisibleAsync();
         await page.Locator("a[href='/coupons/new']").First.ClickAsync();
         await Assertions.Expect(page.GetByRole(AriaRole.Heading, new() { Name = "クーポンを追加" })).ToBeVisibleAsync();
     }
