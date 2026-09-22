@@ -34,3 +34,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# .NET
+**/bin/
+**/obj/
+TestResults/
+playwright-report/
+.packages/
+src/CouponManager.Api/data/

@@ -1,0 +1,52 @@
+name: coupon-manager
+services:
+  db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_DB: coupons
+      POSTGRES_USER: coupons
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coupons-local}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coupons -d coupons"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+  api:
+    build:
+      context: .
+      dockerfile: src/CouponManager.Api/Dockerfile
+    environment:
+      ConnectionStrings__Coupons: Host=db;Port=5432;Database=coupons;Username=coupons;Password=${POSTGRES_PASSWORD:-coupons-local}
+      Database__MigrateOnStartup: "true"
+      Cors__Origins__0: http://localhost:8080
+      Ai__BaseUrl: ${AI_BASE_URL:-}
+      Ai__ApiKey: ${AI_API_KEY:-}
+      Ai__Model: ${AI_MODEL:-Qwen/Qwen2.5-VL-3B-Instruct}
+      Ai__TimeoutSeconds: ${AI_TIMEOUT_SECONDS:-180}
+      Notifications__TimeZone: ${NOTIFICATION_TIME_ZONE:-Asia/Tokyo}
+    volumes:
+      - coupon-images:/app/data/uploads
+    ports:
+      - "5080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+  web:
+    build:
+      context: .
+      dockerfile: src/CouponManager.Web/Dockerfile
+    environment:
+      ApiBaseUrl: http://api:8080
+      DataProtectionKeysPath: /app/data-protection-keys
+    volumes:
+      - data-protection-keys:/app/data-protection-keys
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+volumes:
+  postgres-data:
+  coupon-images:
+  data-protection-keys:

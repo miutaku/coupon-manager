@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="src/CouponManager.Domain/CouponManager.Domain.csproj" />
+  <Project Path="src/CouponManager.Application/CouponManager.Application.csproj" />
+  <Project Path="src/CouponManager.Infrastructure/CouponManager.Infrastructure.csproj" />
+  <Project Path="src/CouponManager.Api/CouponManager.Api.csproj" />
+  <Project Path="src/CouponManager.Web/CouponManager.Web.csproj" />
+  <Project Path="tests/CouponManager.Domain.Tests/CouponManager.Domain.Tests.csproj" />
+  <Project Path="tests/CouponManager.Api.Tests/CouponManager.Api.Tests.csproj" />
+  <Project Path="tests/CouponManager.Ui.Tests/CouponManager.Ui.Tests.csproj" />
+</Solution>
