@@ -1,0 +1,29 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject UiText T
+@inject CouponManager.Web.Services.ToastService Toasts
+
+<div class="shell">
+    <main>@Body</main>
+    <nav class="bottom-nav" aria-label="@T["Navigation"]">
+        <NavLink href="/" Match="NavLinkMatch.All"><span class="nav-indicator"><span class="material-symbols-rounded">confirmation_number</span></span><span>@T["Coupons"]</span></NavLink>
+        <NavLink href="/coupons/new"><span class="nav-indicator"><span class="material-symbols-rounded">add_card</span></span><span>@T["Add"]</span></NavLink>
+        <NavLink href="/settings"><span class="nav-indicator"><span class="material-symbols-rounded">settings</span></span><span>@T["Settings"]</span></NavLink>
+    </nav>
+    <div class="toast-region" aria-live="polite" aria-label="Notifications">
+        @foreach (var toast in Toasts.Messages)
+        {
+            <div class="toast @(toast.Kind == CouponManager.Web.Services.ToastKind.Error ? "error" : "success")" role="status" @key="toast.Id">
+                <span class="material-symbols-rounded">@(toast.Kind == CouponManager.Web.Services.ToastKind.Error ? "error" : "check_circle")</span>
+                <span>@toast.Text</span>
+                <button type="button" @onclick="() => Toasts.Dismiss(toast.Id)" aria-label="@T["Close"]"><span class="material-symbols-rounded">close</span></button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized() => Toasts.Changed += OnToastsChanged;
+    private void OnToastsChanged() => _ = InvokeAsync(StateHasChanged);
+    public void Dispose() => Toasts.Changed -= OnToastsChanged;
+}

@@ -1,0 +1,348 @@
+@page "/"
+@inject IHttpClientFactory HttpClientFactory
+@inject UiText T
+@inject CouponManager.Web.Services.ToastService Toasts
+@inject TimeProvider Clock
+
+<PageTitle>@T["Coupons"]</PageTitle>
+
+<section class="hero wallet-hero">
+    <h1>@T["Coupons"]</h1>
+</section>
+
+<section class="filters" aria-label="@T["Search"]">
+    <div class="search-box">
+        <span class="material-symbols-rounded">search</span>
+        <input @bind="search" @bind:event="oninput" placeholder="@T["Search"]" @onkeydown="SearchOnEnter" />
+        <button title="@T["SearchAction"]" @onclick="LoadCouponsAsync">
+            <span class="material-symbols-rounded">arrow_forward</span>
+        </button>
+    </div>
+    <div class="filter-options">
+        <select @bind="searchField" aria-label="@T["SearchField"]">
+            <option value="">@T["All"]</option>
+            <option value="name">@T["Name"]</option>
+            <option value="description">@T["Details"]</option>
+            <option value="label">@T["Label"]</option>
+            <option value="code">@T["Code"]</option>
+        </select>
+        <select @bind="sort" @bind:after="LoadCouponsAsync" aria-label="@T["SortOrder"]">
+            <option value="CreatedNewest">@T["Newest"]</option>
+            <option value="CreatedOldest">@T["Oldest"]</option>
+            <option value="ExpirationSoonest">@T["Expiring"]</option>
+            <option value="Name">@T["NameOrder"]</option>
+        </select>
+        <label class="switch">
+            <input type="checkbox" @bind="includeInactive" @bind:after="LoadCouponsAsync" />
+            @T["ShowInactive"]
+        </label>
+        <button class="round-action @(selectionMode ? "selected" : "")" @onclick="ToggleSelection" title="@(selectionMode ? T["CloseSelection"] : T["Select"])">
+            <span class="material-symbols-rounded">@(selectionMode ? "close" : "select_check_box")</span>
+        </button>
+    </div>
+</section>
+
+@if (error is not null)
+{
+    <div class="notice error">@error <button @onclick="LoadCouponsAsync">@T["Retry"]</button></div>
+}
+else if (coupons is null)
+{
+    <div class="loading"><span></span><span></span><span></span></div>
+}
+else if (coupons.Count == 0)
+{
+    <section class="empty">
+        <div class="empty-icon"><span class="material-symbols-rounded">confirmation_number</span></div>
+        <h2>@T["EmptyTitle"]</h2>
+        <p>@T["EmptyBody"]</p>
+        <a class="button primary" href="/coupons/new">@T["FirstCoupon"]</a>
+    </section>
+}
+else
+{
+    <div class="wallet-stack">
+        @foreach (var coupon in coupons)
+        {
+            var isLeaving = leaving.Contains(coupon.Id);
+            <article class="wallet-card @WalletClass(coupon) @(coupon.RemainingUses == 0 ? "used" : "") @(coupon.IsExpired ? "expired" : "") @(isLeaving ? "leaving" : "")">
+                @if (selectionMode)
+                {
+                    <label class="select-coupon">
+                        <input type="checkbox" checked="@selected.Contains(coupon.Id)" @onchange="eventArgs => Select(coupon.Id, eventArgs)" />
+                        <span class="material-symbols-rounded">check</span>
+                    </label>
+                }
+                <div class="card-orbit orbit-one"></div>
+                <div class="card-orbit orbit-two"></div>
+                <div class="wallet-card-top">
+                    <div class="issuer-mark"><span class="material-symbols-rounded">@DisplayIcon(coupon.DisplayType)</span></div>
+                    <div class="issuer-copy"><strong>@coupon.Name</strong></div>
+                </div>
+                <div class="wallet-card-body">
+                    @if (!string.IsNullOrWhiteSpace(coupon.Description))
+                    {
+                        <p class="description">@coupon.Description</p>
+                    }
+                    <p class="expiry @(coupon.IsExpired || IsSoon(coupon.ExpiresOn) ? "soon" : "")">
+                        <span class="material-symbols-rounded">event</span>@ExpiryText(coupon)
+                    </p>
+                    @if (coupon.RemainingUses == 0)
+                    {
+                        <span class="status-chip"><span class="material-symbols-rounded">check_circle</span>@T["Used"]</span>
+                    }
+                    <div class="labels">
+                        @foreach (var label in coupon.Labels)
+                        {
+                            <span>@label.Key · @label.Value</span>
+                        }
+                    </div>
+                </div>
+                <div class="wallet-card-bottom">
+                    <div class="uses">
+                        <span>@T["Remaining"]</span>
+                        <strong>@coupon.RemainingUses</strong>
+                        <span>@T.Format("Times", coupon.TotalUses)</span>
+                    </div>
+                    <div class="card-actions">
+                        <button class="card-main-action" @onclick="() => Show(coupon)">
+                            <span class="material-symbols-rounded">@DisplayIcon(coupon.DisplayType)</span>
+                            <span>@T["Display"]</span>
+                        </button>
+                        <button class="card-icon-action" title="@T["UseOnce"]" @onclick="() => UseOnce(coupon.Id)">
+                            <span class="material-symbols-rounded">exposure_neg_1</span>
+                        </button>
+                        @if (coupon.HasImage)
+                        {
+                            <button class="card-icon-action" title="@T["Image"]" @onclick="() => ShowImage(coupon)">
+                                <span class="material-symbols-rounded">image</span>
+                            </button>
+                        }
+                        <a class="card-icon-action" title="@T["Edit"]" href="/coupons/@coupon.Id/edit">
+                            <span class="material-symbols-rounded">edit</span>
+                        </a>
+                        <button class="card-icon-action" title="@T["MarkUsed"]" @onclick="() => MarkUsed(coupon.Id)">
+                            <span class="material-symbols-rounded">done_all</span>
+                        </button>
+                    </div>
+                </div>
+            </article>
+        }
+    </div>
+}
+
+@if (selectionMode && selected.Count > 0)
+{
+    <aside class="bulk-bar">
+        <button class="button ghost" @onclick="SelectAll">@(selected.Count == coupons?.Count ? T["Clear"] : T["SelectAll"])</button>
+        <strong>@T.Format("Selected", selected.Count)</strong>
+        <button class="button tonal" @onclick="BulkUse">@T["MarkUsed"]</button>
+    </aside>
+}
+
+@if (displayCoupon is not null)
+{
+    <div class="modal-backdrop" @onclick="CloseModal">
+        <section class="modal" @onclick:stopPropagation="true">
+            <button class="modal-close" @onclick="CloseModal" aria-label="@T["Close"]">×</button>
+            <h2>@displayCoupon.Name</h2>
+            @if (showUploadedImage)
+            {
+                <img class="coupon-code" src="/media/coupons/@displayCoupon.Id/image" alt="@displayCoupon.Name - @T["Image"]" />
+            }
+            else if (displayCoupon.DisplayType == CouponDisplayType.Serial)
+            {
+                <div class="serial">@displayCoupon.DisplayValue</div>
+            }
+            else
+            {
+                <img class="coupon-code" src="/media/coupons/@displayCoupon.Id/display" alt="@DisplayName(displayCoupon.DisplayType)" />
+            }
+            <p class="uses center">@T["Remaining"] <strong>@displayCoupon.RemainingUses</strong> @T.Format("Times", displayCoupon.TotalUses)</p>
+        </section>
+    </div>
+}
+
+@code {
+    private List<CouponDto>? coupons;
+    private readonly HashSet<Guid> selected = [];
+    private readonly HashSet<Guid> leaving = [];
+    private string search = "";
+    private string searchField = "";
+    private string sort = "CreatedNewest";
+    private bool includeInactive;
+    private bool selectionMode;
+    private DateOnly today;
+    private string? error;
+    private CouponDto? displayCoupon;
+    private bool showUploadedImage;
+
+    protected override Task OnInitializedAsync() => LoadCouponsAsync();
+
+    private async Task LoadCouponsAsync()
+    {
+        try
+        {
+            error = null;
+            today = DateOnly.FromDateTime(Clock.GetUtcNow().UtcDateTime);
+            var url = $"/api/coupons?search={Uri.EscapeDataString(search)}&searchField={searchField}&sort={sort}&includeUsed={includeInactive}&includeExpired={includeInactive}";
+            coupons = await HttpClientFactory.CreateClient("api").GetFromJsonAsync<List<CouponDto>>(url) ?? [];
+            selected.IntersectWith(coupons.Select(x => x.Id));
+        }
+        catch (HttpRequestException)
+        {
+            error = T["ApiError"];
+        }
+    }
+
+    private async Task SearchOnEnter(KeyboardEventArgs eventArgs)
+    {
+        if (eventArgs.Key == "Enter")
+        {
+            await LoadCouponsAsync();
+        }
+    }
+
+    private void ToggleSelection()
+    {
+        selectionMode = !selectionMode;
+        if (!selectionMode)
+        {
+            selected.Clear();
+        }
+    }
+
+    private void Select(Guid id, ChangeEventArgs eventArgs)
+    {
+        if (eventArgs.Value is true)
+        {
+            selected.Add(id);
+            return;
+        }
+
+        selected.Remove(id);
+    }
+
+    private void SelectAll()
+    {
+        if (coupons is null)
+        {
+            return;
+        }
+
+        if (selected.Count == coupons.Count)
+        {
+            selected.Clear();
+            return;
+        }
+
+        selected.UnionWith(coupons.Select(coupon => coupon.Id));
+    }
+
+    private void Show(CouponDto coupon)
+    {
+        displayCoupon = coupon;
+        showUploadedImage = false;
+    }
+
+    private void ShowImage(CouponDto coupon)
+    {
+        displayCoupon = coupon;
+        showUploadedImage = true;
+    }
+
+    private void CloseModal() => displayCoupon = null;
+
+    private async Task MarkUsed(Guid id)
+    {
+        leaving.Add(id);
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(500);
+
+        await SendCouponCommandAsync($"/api/coupons/{id}/used", "CouponMarkedUsed");
+        leaving.Remove(id);
+        await LoadCouponsAsync();
+    }
+
+    private async Task UseOnce(Guid id)
+    {
+        await SendCouponCommandAsync($"/api/coupons/{id}/use-once", "CouponUsedOnce");
+        await LoadCouponsAsync();
+    }
+
+    private async Task BulkUse()
+    {
+        var selectedIds = selected.ToArray();
+        leaving.UnionWith(selectedIds);
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(450);
+
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("api")
+                .PostAsJsonAsync("/api/coupons/bulk/used", new { ids = selectedIds });
+            if (!response.IsSuccessStatusCode)
+            {
+                Toasts.Error(T["UpdateError"]);
+                return;
+            }
+
+            Toasts.Success(T.Format("CouponsMarkedUsed", selectedIds.Length));
+            selected.Clear();
+        }
+        catch (HttpRequestException)
+        {
+            Toasts.Error(T["ApiError"]);
+        }
+        finally
+        {
+            leaving.Clear();
+            await LoadCouponsAsync();
+        }
+    }
+
+    private async Task SendCouponCommandAsync(string endpoint, string successMessageKey)
+    {
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("api").PostAsync(endpoint, null);
+            if (response.IsSuccessStatusCode)
+            {
+                Toasts.Success(T[successMessageKey]);
+                return;
+            }
+
+            Toasts.Error(T["UpdateError"]);
+        }
+        catch (HttpRequestException)
+        {
+            Toasts.Error(T["ApiError"]);
+        }
+    }
+
+    private static string DisplayIcon(CouponDisplayType type) => type switch
+    {
+        CouponDisplayType.QrCode => "qr_code_2",
+        CouponDisplayType.Barcode => "barcode",
+        _ => "password"
+    };
+
+    private string DisplayName(CouponDisplayType type) => type switch
+    {
+        CouponDisplayType.QrCode => T["QrCode"],
+        CouponDisplayType.Barcode => T["Barcode"],
+        _ => T["Serial"]
+    };
+
+    private string ExpiryText(CouponDto coupon) => coupon switch
+    {
+        { IsExpired: true } => T["Expired"],
+        { ExpiresOn: { } date } => T.Format("Until", date.ToString("yyyy.MM.dd")),
+        _ => T["NoExpiry"]
+    };
+    private bool IsSoon(DateOnly? date)
+    {
+        return date is { } value && value <= today.AddDays(7);
+    }
+    private static string WalletClass(CouponDto coupon) => $"wallet-palette-{coupon.Id.ToByteArray()[0] % 5}";
+}

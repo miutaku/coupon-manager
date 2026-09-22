@@ -1,0 +1,478 @@
+@page "/coupons/new"
+@page "/coupons/{Id:guid}/edit"
+@inject IHttpClientFactory HttpClientFactory
+@inject NavigationManager Navigation
+@inject UiText T
+@inject CouponManager.Web.Services.ToastService Toasts
+
+<PageTitle>@(Id == Guid.Empty ? T["AddCoupon"] : T["EditCoupon"])</PageTitle>
+
+<section class="form-hero">
+    <a href="/" class="back-link">← @T["Back"]</a>
+    <h1>@(Id == Guid.Empty ? T["AddCoupon"] : T["EditCoupon"])</h1>
+</section>
+
+@if (loading)
+{
+    <div class="loading"><span></span><span></span><span></span></div>
+}
+else
+{
+    <EditForm Model="model" OnValidSubmit="SaveAsync" FormName="coupon">
+        <DataAnnotationsValidator />
+        <div class="form-sheet">
+            <section class="form-section">
+                <div class="section-number">01</div><div class="section-content">
+                    <h2>@T["BasicInfo"]</h2>
+                    <label>@T["CouponName"] <em>@T["Required"]</em><InputText @bind-Value="model.Name" placeholder="@T["NameExample"]" /><ValidationMessage For="() => model.Name" /></label>
+                    <label>@T["Details"] <InputTextArea @bind-Value="model.Description" placeholder="@T["DescriptionPlaceholder"]" rows="3" /></label>
+                    <div class="field-row">
+                        <label>@T["Expiry"] <InputDate @bind-Value="model.ExpiresOn" /></label>
+                        <label>@T["TotalUses"] <InputNumber @bind-Value="model.TotalUses" min="1" /></label>
+                        @if (Id != Guid.Empty)
+                        {
+                            <label>@T["RemainingUses"] <InputNumber @bind-Value="model.RemainingUses" min="0" max="@model.TotalUses" /></label>
+                        }
+                    </div>
+                </div>
+            </section>
+
+            <section class="form-section">
+                <div class="section-number">02</div><div class="section-content">
+                    <h2>@T["DisplayCode"]</h2>
+                    <div class="type-options">
+                        <InputRadioGroup @bind-Value="model.DisplayType">
+                            @foreach (var type in Enum.GetValues<CouponDisplayType>())
+                            {
+                                <label class="type-option @(model.DisplayType == type ? "active" : "")">
+                                    <InputRadio Value="type" />
+                                    <span class="type-symbol">@(type == CouponDisplayType.QrCode ? "▦" : type == CouponDisplayType.Barcode ? "▥" : "Aa")</span>
+                                    <strong>@(type == CouponDisplayType.QrCode ? T["QrCode"] : type == CouponDisplayType.Barcode ? T["Barcode"] : T["Serial"])</strong>
+                                </label>
+                            }
+                        </InputRadioGroup>
+                    </div>
+                    @if (model.DisplayType == CouponDisplayType.Barcode)
+                    {
+                        <label>@T["BarcodeFormat"]
+                            <InputSelect @bind-Value="model.BarcodeType">
+                                <option value="Code128">Code 128</option>
+                                <option value="Ean13">JAN / EAN-13</option>
+                                <option value="Ean8">EAN-8</option>
+                            </InputSelect>
+                        </label>
+                    }
+                    <label>@T["CodeValue"] <em>@T["Required"]</em><InputTextArea @bind-Value="model.DisplayValue" placeholder="@T["CodePlaceholder"]" /><ValidationMessage For="() => model.DisplayValue" /></label>
+                    <label class="upload-box">
+                        <span class="material-symbols-rounded">auto_awesome</span>
+                        <span class="upload-copy"><strong>@T["CouponImage"]</strong><small>@T["ImageHelp"]</small></span>
+                        <InputFile id="coupon-image-input" OnChange="SelectImage" accept="image/jpeg,image/png,image/webp,image/gif" />
+                        @if (image is not null)
+                        {
+                            <span class="file-name">@image.Name</span>
+                        }
+                    </label>
+                    @if (Id == Guid.Empty)
+                    {
+                        <label class="switch image-retention-option">
+                            <input type="checkbox" @bind="retainImage" />
+                            <span class="material-symbols-rounded">@(retainImage ? "check_box" : "check_box_outline_blank")</span>
+                            @T["KeepCouponImage"]
+                        </label>
+                    }
+                    @if (analyzing)
+                    {
+                        <div class="analysis-status analyzing"><span class="analysis-spinner"></span>@T["AnalyzingImage"]</div>
+                    }
+                    else if (analysisMessage is not null)
+                    {
+                        <div class="analysis-status @(analysisFailed ? "failed" : "")">
+                            <span class="material-symbols-rounded">@(analysisFailed ? "error" : "auto_awesome")</span>@analysisMessage
+                        </div>
+                    }
+                    @if (image is not null && !analyzing)
+                    {
+                        <div class="ai-actions">
+                            <button type="button" class="button ai-button" @onclick="AnalyzeImageAsync">
+                                <span class="material-symbols-rounded">refresh</span>@T["AnalyzeAgain"]
+                            </button>
+                            <small>@T["AiImageHelp"]</small>
+                        </div>
+                    }
+                    @if (aiCandidates.Count > 0)
+                    {
+                        <div class="ai-candidates">
+                            <h3>@T.Format("AiCandidates", aiCandidates.Count)</h3>
+                            @foreach (var candidate in aiCandidates)
+                            {
+                                <article class="ai-candidate" @key="candidate">
+                                    <div><strong>@(candidate.Name ?? T["UnnamedCandidate"])</strong>
+                                        @if (!string.IsNullOrWhiteSpace(candidate.Description)) { <p>@candidate.Description</p> }
+                                        @if (candidate.ExpiresOn is not null) { <small>@T.Format("AiExpiry", candidate.ExpiresOn.Value.ToString("yyyy-MM-dd"))</small> }
+                                    </div>
+                                    <button type="button" class="button ghost" @onclick="() => ApplyAiCandidate(candidate)">@T["UseCandidate"]</button>
+                                </article>
+                            }
+                        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="form-section">
+                <div class="section-number">03</div><div class="section-content">
+                    <h2>@T["Labels"]</h2>
+                    <div class="label-editor">
+                        @foreach (var label in model.Labels)
+                        {
+                            <div class="label-pair @(removingLabels.Contains(label) ? "removing" : "")" @key="label">
+                                <label>@T["LabelKey"] <InputText @bind-Value="label.Key" /></label>
+                                <label>@T["LabelValue"] <InputText @bind-Value="label.Value" /></label>
+                                <button type="button" class="remove-label" title="@T["RemoveLabel"]" aria-label="@T["RemoveLabel"]" disabled="@removingLabels.Contains(label)" @onclick="() => RemoveLabel(label)"><span class="material-symbols-rounded">remove</span></button>
+                            </div>
+                        }
+                        <button type="button" class="add-label" @onclick="AddLabel"><span class="material-symbols-rounded">add</span>@T["AddLabel"]</button>
+                    </div>
+                </div>
+            </section>
+        </div>
+        @if (error is not null)
+        {
+            <div class="notice error">@error</div>
+        }
+        <div class="form-actions"><a href="/" class="button ghost">@T["Cancel"]</a><button class="button primary large" type="submit" disabled="@saving">@(saving ? T["Saving"] : T["Save"])</button></div>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+    private CouponForm model = null!;
+    private IBrowserFile? image;
+    private readonly HashSet<LabelForm> removingLabels = [];
+    private bool loading;
+    private bool saving;
+    private bool retainImage = true;
+    private bool analyzing;
+    private bool analysisFailed;
+    private string? analysisMessage;
+    private int analysisRequest;
+    private List<CouponImageCandidateDto> aiCandidates = [];
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        ResetForm();
+        if (Id == Guid.Empty)
+        {
+            return;
+        }
+
+        loading = true;
+        try
+        {
+            var coupon = await HttpClientFactory.CreateClient("api").GetFromJsonAsync<CouponDto>($"/api/coupons/{Id}");
+            if (coupon is null)
+            {
+                error = T["NotFound"];
+                return;
+            }
+
+            PopulateForm(coupon);
+        }
+        catch (HttpRequestException)
+        {
+            error = T["ApiError"];
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void ResetForm()
+    {
+        model = new CouponForm(T);
+        image = null;
+        retainImage = true;
+        analysisMessage = null;
+        analysisFailed = false;
+        aiCandidates = [];
+        error = null;
+    }
+
+    private void PopulateForm(CouponDto coupon)
+    {
+        model.Name = coupon.Name;
+        model.Description = coupon.Description;
+        model.ExpiresOn = coupon.ExpiresOn;
+        model.TotalUses = coupon.TotalUses;
+        model.RemainingUses = coupon.RemainingUses;
+        model.DisplayType = coupon.DisplayType;
+        model.BarcodeType = coupon.BarcodeType;
+        model.DisplayValue = coupon.DisplayValue;
+        model.Labels = coupon.Labels
+            .Select(label => new LabelForm { Key = label.Key, Value = label.Value })
+            .DefaultIfEmpty(new LabelForm())
+            .ToList();
+    }
+
+    private async Task SelectImage(InputFileChangeEventArgs e)
+    {
+        var selectedImage = e.File;
+        image = selectedImage;
+        var request = ++analysisRequest;
+        analyzing = true;
+        analysisFailed = false;
+        analysisMessage = null;
+        aiCandidates.Clear();
+        await AnalyzeImageAsync(request);
+    }
+
+    private Task AnalyzeImageAsync() => AnalyzeImageAsync(++analysisRequest);
+
+    private async Task AnalyzeImageAsync(int request)
+    {
+        if (image is null)
+        {
+            return;
+        }
+
+        analyzing = true;
+        analysisFailed = false;
+        analysisMessage = null;
+        aiCandidates.Clear();
+        try
+        {
+            using var content = new MultipartFormDataContent();
+            using var stream = image.OpenReadStream(10 * 1024 * 1024);
+            using var fileContent = new StreamContent(stream);
+            fileContent.Headers.ContentType = new(image.ContentType);
+            content.Add(fileContent, "file", image.Name);
+            var response = await HttpClientFactory.CreateClient("api").PostAsync("/api/coupons/analyze-image", content);
+            if (request != analysisRequest)
+            {
+                return;
+            }
+
+            if (!response.IsSuccessStatusCode)
+            {
+                analysisFailed = true;
+                analysisMessage = response.StatusCode switch
+                {
+                    System.Net.HttpStatusCode.ServiceUnavailable => T["AiNotConfigured"],
+                    System.Net.HttpStatusCode.BadGateway or System.Net.HttpStatusCode.GatewayTimeout => T["AiServiceUnavailable"],
+                    _ => T["AnalysisFailed"]
+                };
+                return;
+            }
+            var result = await response.Content.ReadFromJsonAsync<CouponImageAnalysisDto>();
+            if (result is null)
+            {
+                throw new HttpRequestException();
+            }
+
+            aiCandidates = result.Coupons.Take(10).ToList();
+            if (aiCandidates.Count == 1)
+            {
+                ApplyAiCandidate(aiCandidates[0], showMessage: false);
+                analysisMessage = null;
+                Toasts.Success(T["AnalysisComplete"]);
+            }
+            else
+            {
+                analysisMessage = aiCandidates.Count > 0
+                    ? T.Format("AiComplete", aiCandidates.Count)
+                    : T["AiNoCoupons"];
+            }
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException)
+        {
+            if (request != analysisRequest)
+            {
+                return;
+            }
+
+            analysisFailed = true;
+            analysisMessage = T["AnalysisFailed"];
+        }
+        finally
+        {
+            if (request == analysisRequest)
+            {
+                analyzing = false;
+            }
+        }
+    }
+
+    private void ApplyAiCandidate(CouponImageCandidateDto candidate, bool showMessage = true)
+    {
+        if (!string.IsNullOrWhiteSpace(candidate.Name))
+        {
+            model.Name = TrimToLength(candidate.Name, Coupon.MaximumNameLength);
+        }
+
+        if (!string.IsNullOrWhiteSpace(candidate.Description))
+        {
+            model.Description = TrimToLength(candidate.Description, Coupon.MaximumDescriptionLength);
+        }
+
+        if (candidate.ExpiresOn is not null)
+        {
+            model.ExpiresOn = candidate.ExpiresOn;
+        }
+
+        if (candidate.TotalUses is >= 1 and <= 999)
+        {
+            model.TotalUses = candidate.TotalUses.Value;
+            model.RemainingUses = candidate.TotalUses.Value;
+        }
+        if (!string.IsNullOrWhiteSpace(candidate.DisplayValue) && candidate.DisplayType is not null)
+        {
+            model.DisplayType = candidate.DisplayType.Value;
+            if (candidate.BarcodeType is not null)
+            {
+                model.BarcodeType = candidate.BarcodeType.Value;
+            }
+
+            model.DisplayValue = TrimToLength(candidate.DisplayValue, Coupon.MaximumDisplayValueLength);
+        }
+        if (showMessage)
+        {
+            analysisMessage = null;
+            Toasts.Success(T["CandidateApplied"]);
+        }
+    }
+
+    private static string TrimToLength(string value, int maximumLength)
+    {
+        var trimmed = value.Trim();
+        return trimmed.Length <= maximumLength ? trimmed : trimmed[..maximumLength];
+    }
+
+    private void AddLabel() => model.Labels.Add(new());
+
+    private async Task RemoveLabel(LabelForm label)
+    {
+        if (!removingLabels.Add(label))
+        {
+            return;
+        }
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(280);
+        model.Labels.Remove(label);
+        removingLabels.Remove(label);
+        if (model.Labels.Count == 0)
+        {
+            model.Labels.Add(new());
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        error = null;
+        try
+        {
+            if (model.Labels.Any(x => string.IsNullOrWhiteSpace(x.Key) != string.IsNullOrWhiteSpace(x.Value)))
+            {
+                error = T["LabelPairRequired"];
+                return;
+            }
+            var labels = model.Labels
+                .Where(x => !string.IsNullOrWhiteSpace(x.Key) && !string.IsNullOrWhiteSpace(x.Value))
+                .Select(x => new LabelDto(x.Key.Trim(), x.Value.Trim()))
+                .ToList();
+            var request = new SaveCouponRequest(model.Name, model.Description, model.ExpiresOn, model.TotalUses,
+                Id == Guid.Empty ? null : model.RemainingUses, model.DisplayType, model.BarcodeType, model.DisplayValue, labels);
+            var client = HttpClientFactory.CreateClient("api");
+            using var response = Id == Guid.Empty
+                ? await client.PostAsJsonAsync("/api/coupons", request)
+                : await client.PutAsJsonAsync($"/api/coupons/{Id}", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                error = await response.Content.ReadAsStringAsync();
+                return;
+            }
+
+            var saved = await response.Content.ReadFromJsonAsync<CouponDto>();
+            if (image is not null && saved is not null && (Id != Guid.Empty || retainImage))
+            {
+                if (!await UploadImageAsync(client, saved.Id))
+                {
+                    Toasts.Error(T["UploadError"]);
+                    Navigation.NavigateTo("/");
+                    return;
+                }
+            }
+
+            Toasts.Success(T[Id == Guid.Empty ? "CouponAdded" : "CouponUpdated"]);
+            Navigation.NavigateTo("/");
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException)
+        {
+            error = T["SaveNetworkError"];
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task<bool> UploadImageAsync(HttpClient client, Guid couponId)
+    {
+        using var content = new MultipartFormDataContent();
+        await using var stream = image!.OpenReadStream(10 * 1024 * 1024);
+        using var fileContent = new StreamContent(stream);
+        fileContent.Headers.ContentType = new(image.ContentType);
+        content.Add(fileContent, "file", image.Name);
+        using var response = await client.PostAsync($"/api/coupons/{couponId}/image", content);
+        return response.IsSuccessStatusCode;
+    }
+
+    private sealed class CouponForm(UiText text) : System.ComponentModel.DataAnnotations.IValidatableObject
+    {
+        public string Name { get; set; } = "";
+        public string? Description { get; set; }
+        public DateOnly? ExpiresOn { get; set; }
+        public int TotalUses { get; set; } = 1;
+        public int RemainingUses { get; set; } = 1;
+        public CouponDisplayType DisplayType { get; set; }
+        public CouponBarcodeType BarcodeType { get; set; }
+        public string DisplayValue { get; set; } = "";
+        public List<LabelForm> Labels { get; set; } = [new()];
+
+        public IEnumerable<System.ComponentModel.DataAnnotations.ValidationResult> Validate(System.ComponentModel.DataAnnotations.ValidationContext validationContext)
+        {
+            if (string.IsNullOrWhiteSpace(Name))
+            {
+                yield return new(text["NameRequired"], [nameof(Name)]);
+            }
+            else if (Name.Length > Coupon.MaximumNameLength)
+            {
+                yield return new(text.Format("ValueRange", 1, Coupon.MaximumNameLength), [nameof(Name)]);
+            }
+
+            if (TotalUses is < 1 or > Coupon.MaximumTotalUses)
+            {
+                yield return new(text.Format("ValueRange", 1, Coupon.MaximumTotalUses), [nameof(TotalUses)]);
+            }
+
+            if (RemainingUses is < 0 or > Coupon.MaximumTotalUses || RemainingUses > TotalUses)
+            {
+                yield return new(text.Format("ValueRange", 0, TotalUses), [nameof(RemainingUses)]);
+            }
+
+            if (string.IsNullOrWhiteSpace(DisplayValue))
+            {
+                yield return new(text["CodeRequired"], [nameof(DisplayValue)]);
+            }
+        }
+    }
+
+    private sealed class LabelForm
+    {
+        public string Key { get; set; } = "";
+        public string Value { get; set; } = "";
+    }
+
+}

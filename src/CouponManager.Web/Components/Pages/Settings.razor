@@ -1,0 +1,195 @@
+@page "/settings"
+@inject IHttpClientFactory HttpClientFactory
+@inject IJSRuntime JS
+@inject UiText T
+@inject CouponManager.Web.Services.ToastService Toasts
+
+<PageTitle>@T["Settings"]</PageTitle>
+
+<section class="form-hero settings-hero">
+    <h1>@T["Settings"]</h1>
+</section>
+
+<div class="settings-list">
+    <section class="settings-card">
+        <div><h2>@T["Appearance"]</h2><p>@T["AppearanceHelp"]</p></div>
+        <div class="segmented-control" aria-label="@T["Appearance"]">
+            <button class="@(theme == "system" ? "active" : "")" @onclick='() => SetTheme("system")'><span class="material-symbols-rounded">brightness_auto</span>@T["System"]</button>
+            <button class="@(theme == "light" ? "active" : "")" @onclick='() => SetTheme("light")'><span class="material-symbols-rounded">light_mode</span>@T["Light"]</button>
+            <button class="@(theme == "dark" ? "active" : "")" @onclick='() => SetTheme("dark")'><span class="material-symbols-rounded">dark_mode</span>@T["Dark"]</button>
+        </div>
+    </section>
+
+    <section class="settings-card">
+        <div><h2>@T["Language"]</h2><p>@T["LanguageHelp"]</p></div>
+        <div class="segmented-control">
+            <a class="@(!T.IsEnglish ? "active" : "")" href="/culture/ja?returnUrl=/settings" data-enhance-nav="false">日本語</a>
+            <a class="@(T.IsEnglish ? "active" : "")" href="/culture/en?returnUrl=/settings" data-enhance-nav="false">English</a>
+        </div>
+    </section>
+
+    <section class="settings-card">
+        <div><h2>@T["AutoDelete"]</h2><p>@T["AutoDeleteHelp"]</p></div>
+        <div class="retention-control">
+            <label class="switch cleanup-toggle">
+                <input type="checkbox" @bind="cleanupEnabled" />
+                <span class="material-symbols-rounded">@(cleanupEnabled ? "check_box" : "check_box_outline_blank")</span>
+                @T["EnableAutoDelete"]
+            </label>
+            <input type="number" @bind="retentionDays" min="1" max="3650" disabled="@(!cleanupEnabled)" aria-label="@T["AutoDelete"]" /> <span>@T["Days"]</span>
+            <button class="button tonal" @onclick="SaveSettings">@T["SaveSettings"]</button>
+        </div>
+    </section>
+
+    <section class="settings-card notification-card">
+        <div><h2>@T["Notifications"]</h2><p>@T["NotificationsHelp"]</p></div>
+        <div class="notification-controls">
+            <label class="switch">
+                <input type="checkbox" @bind="expiryNotificationEnabled" />
+                <span class="material-symbols-rounded">@(expiryNotificationEnabled ? "notifications_active" : "notifications_off")</span>
+                @T["ExpiryNotification"]
+            </label>
+            <div class="lead-time-control">
+                <input type="number" @bind="notificationLeadTimeDays" min="0" max="3650" disabled="@(!expiryNotificationEnabled)" aria-label="@T["NotificationLeadDays"]" />
+                <span>@T["Days"]</span>
+                <input type="number" @bind="notificationLeadTimeHours" min="0" max="23" disabled="@(!expiryNotificationEnabled)" aria-label="@T["NotificationLeadHours"]" />
+                <span>@T["HoursBefore"]</span>
+            </div>
+            <div class="notification-channel">
+                <label class="switch"><input type="checkbox" @bind="discordEnabled" /><span class="material-symbols-rounded">forum</span>Discord</label>
+                <input type="url" @bind="discordWebhookUrl" disabled="@(!discordEnabled)" placeholder="Discord Webhook URL" aria-label="Discord Webhook URL" />
+            </div>
+            <div class="notification-channel">
+                <label class="switch"><input type="checkbox" @bind="shellEnabled" /><span class="material-symbols-rounded">terminal</span>@T["ShellScript"]</label>
+                <input type="text" @bind="shellExecutablePath" disabled="@(!shellEnabled)" placeholder="/app/notifications/notify.sh" aria-label="@T["ShellScriptPath"]" />
+            </div>
+            <button class="button tonal" @onclick="SaveNotificationSettings">@T["SaveNotificationSettings"]</button>
+        </div>
+    </section>
+</div>
+
+@code {
+    private int retentionDays = 30;
+    private bool cleanupEnabled = true;
+    private bool expiryNotificationEnabled;
+    private int notificationLeadTimeDays = 1;
+    private int notificationLeadTimeHours;
+    private bool discordEnabled;
+    private string discordWebhookUrl = "";
+    private bool shellEnabled;
+    private string shellExecutablePath = "";
+    private string theme = "system";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var client = HttpClientFactory.CreateClient("api");
+            var settingsTask = client.GetFromJsonAsync<AppSettingsDto>("/api/settings");
+            var notificationsTask = client.GetFromJsonAsync<NotificationSettingsDto>("/api/notification-settings");
+            await Task.WhenAll(settingsTask, notificationsTask);
+
+            var settings = await settingsTask;
+            retentionDays = settings?.InactiveRetentionDays ?? 30;
+            cleanupEnabled = settings?.InactiveCleanupEnabled ?? true;
+
+            var notifications = await notificationsTask;
+            var expiry = notifications?.Rules.FirstOrDefault(x => x.Type == NotificationTypes.CouponExpiration);
+            expiryNotificationEnabled = expiry?.Enabled ?? false;
+            notificationLeadTimeDays = expiry?.LeadTimeDays ?? 1;
+            notificationLeadTimeHours = expiry?.LeadTimeHours ?? 0;
+
+            var discord = notifications?.Channels.FirstOrDefault(x => x.Type == NotificationTypes.Discord);
+            discordEnabled = discord?.Enabled ?? false;
+            discordWebhookUrl = GetConfiguration(discord, "webhookUrl");
+
+            var shell = notifications?.Channels.FirstOrDefault(x => x.Type == NotificationTypes.ShellScript);
+            shellEnabled = shell?.Enabled ?? false;
+            shellExecutablePath = GetConfiguration(shell, "executablePath");
+        }
+        catch (HttpRequestException)
+        {
+            Toasts.Error(T["ApiError"]);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        theme = await JS.InvokeAsync<string>("couponTheme.get");
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SetTheme(string value)
+    {
+        theme = value;
+        await JS.InvokeVoidAsync("couponTheme.set", value);
+    }
+
+    private async Task SaveSettings()
+    {
+        if (retentionDays is < 1 or > 3650)
+        {
+            Toasts.Error(T["RangeError"]);
+            return;
+        }
+
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("api").PutAsJsonAsync(
+                "/api/settings",
+                new AppSettingsDto(retentionDays, cleanupEnabled));
+            ShowSaveResult(response, "SettingsSaved", "SettingsError");
+        }
+        catch (HttpRequestException)
+        {
+            Toasts.Error(T["ApiError"]);
+        }
+    }
+
+    private async Task SaveNotificationSettings()
+    {
+        if (notificationLeadTimeDays is < 0 or > 3650 || notificationLeadTimeHours is < 0 or > 23 ||
+            (notificationLeadTimeDays == 0 && notificationLeadTimeHours == 0))
+        {
+            Toasts.Error(T["NotificationRangeError"]);
+            return;
+        }
+
+        var request = new NotificationSettingsDto(
+            [new(NotificationTypes.CouponExpiration, expiryNotificationEnabled, notificationLeadTimeDays, notificationLeadTimeHours)],
+            [
+                new(NotificationTypes.Discord, discordEnabled, new Dictionary<string, string> { ["webhookUrl"] = discordWebhookUrl.Trim() }),
+                new(NotificationTypes.ShellScript, shellEnabled, new Dictionary<string, string> { ["executablePath"] = shellExecutablePath.Trim() })
+            ]);
+
+        try
+        {
+            using var response = await HttpClientFactory.CreateClient("api")
+                .PutAsJsonAsync("/api/notification-settings", request);
+            ShowSaveResult(response, "NotificationSettingsSaved", "NotificationSettingsError");
+        }
+        catch (HttpRequestException)
+        {
+            Toasts.Error(T["ApiError"]);
+        }
+    }
+
+    private void ShowSaveResult(HttpResponseMessage response, string successKey, string errorKey)
+    {
+        if (response.IsSuccessStatusCode)
+        {
+            Toasts.Success(T[successKey]);
+            return;
+        }
+
+        Toasts.Error(T[errorKey]);
+    }
+
+    private static string GetConfiguration(NotificationChannelDto? channel, string key) =>
+        channel?.Configuration.TryGetValue(key, out var value) is true ? value : "";
+}
