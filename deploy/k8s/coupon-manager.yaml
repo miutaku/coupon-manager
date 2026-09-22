@@ -1,0 +1,134 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: coupon-manager
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: coupon-manager-secrets
+  namespace: coupon-manager
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: replace-me
+  AI_API_KEY: replace-if-needed
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: coupon-manager
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 5Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: coupon-images
+  namespace: coupon-manager
+spec:
+  accessModes: [ReadWriteOnce]
+  resources: { requests: { storage: 2Gi } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: coupon-manager
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coupon-postgres } }
+  template:
+    metadata: { labels: { app: coupon-postgres } }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:18.6-alpine
+          ports: [{ containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_DB, value: coupons }
+            - { name: POSTGRES_USER, value: coupons }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: coupon-manager-secrets, key: POSTGRES_PASSWORD } }
+          readinessProbe: { exec: { command: [pg_isready, -U, coupons, -d, coupons] }, initialDelaySeconds: 5, periodSeconds: 5 }
+          volumeMounts: [{ name: data, mountPath: /var/lib/postgresql }]
+      volumes: [{ name: data, persistentVolumeClaim: { claimName: postgres-data } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: coupon-manager
+spec:
+  selector: { app: coupon-postgres }
+  ports: [{ port: 5432, targetPort: 5432 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: coupon-manager
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coupon-api } }
+  template:
+    metadata: { labels: { app: coupon-api } }
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/OWNER/coupon-manager-api:latest
+          ports: [{ containerPort: 8080 }]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: coupon-manager-secrets, key: POSTGRES_PASSWORD } }
+            - { name: Database__MigrateOnStartup, value: "true" }
+            - { name: Cors__Origins__0, value: "https://coupons.example.com" }
+            - { name: Ai__BaseUrl, value: "https://ai.example.com/v1" }
+            - { name: Ai__Model, value: "Qwen/Qwen2.5-VL-3B-Instruct" }
+            - { name: Notifications__TimeZone, value: "Asia/Tokyo" }
+            - name: Ai__ApiKey
+              valueFrom: { secretKeyRef: { name: coupon-manager-secrets, key: AI_API_KEY } }
+            - name: ConnectionStrings__Coupons
+              value: Host=postgres;Database=coupons;Username=coupons;Password=$(POSTGRES_PASSWORD)
+          readinessProbe: { httpGet: { path: /health, port: 8080 }, initialDelaySeconds: 5, periodSeconds: 5 }
+          volumeMounts: [{ name: images, mountPath: /app/data/uploads }]
+      volumes: [{ name: images, persistentVolumeClaim: { claimName: coupon-images } }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: coupon-manager
+spec:
+  selector: { app: coupon-api }
+  ports: [{ port: 8080, targetPort: 8080 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: coupon-manager
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: coupon-web } }
+  template:
+    metadata: { labels: { app: coupon-web } }
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/OWNER/coupon-manager-web:latest
+          ports: [{ containerPort: 8080 }]
+          env:
+            - { name: ApiBaseUrl, value: "http://api:8080" }
+            - { name: ApiPublicUrl, value: "https://api.coupons.example.com" }
+          readinessProbe: { httpGet: { path: /, port: 8080 }, initialDelaySeconds: 5, periodSeconds: 5 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: coupon-manager
+spec:
+  selector: { app: coupon-web }
+  ports: [{ port: 80, targetPort: 8080 }]
