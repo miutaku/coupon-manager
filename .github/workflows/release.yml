@@ -1,0 +1,41 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+  packages: write
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/CouponManager.Api/Dockerfile
+          tags: ghcr.io/${{ github.repository }}-api:${{ github.ref_name }}
+          outputs: |
+            type=registry
+            type=oci,dest=/tmp/coupon-manager-api.tar
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/CouponManager.Web/Dockerfile
+          tags: ghcr.io/${{ github.repository }}-web:${{ github.ref_name }}
+          outputs: |
+            type=registry
+            type=oci,dest=/tmp/coupon-manager-web.tar
+      - run: gzip /tmp/coupon-manager-api.tar /tmp/coupon-manager-web.tar
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            /tmp/coupon-manager-api.tar.gz
+            /tmp/coupon-manager-web.tar.gz
