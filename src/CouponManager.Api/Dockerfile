@@ -1,9 +1,9 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0.403 AS build
 WORKDIR /src
 COPY . .
 RUN dotnet publish src/CouponManager.Api/CouponManager.Api.csproj -c Release -o /app --no-self-contained
 
-FROM mcr.microsoft.com/dotnet/aspnet:10.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0.14
 WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgssapi-krb5-2 \
